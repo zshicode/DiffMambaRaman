@@ -19,7 +19,7 @@ sklearn==0.21.3
 python main.py --model FlowMatching
 ```
 
-`args.model` can be either DDIM or FlowMatching (default).
+`args.model` can be one of these diffusion models: DDIM, FlowMatching, RectifiedFlow, Consistency, SchrodingerBridge (default).
 
 Users can define the elements to be identified by modifying list `elem`.
 
