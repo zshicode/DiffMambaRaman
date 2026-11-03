@@ -34,7 +34,7 @@ parser.add_argument('--c', type=int, default=2,
                     help='Num of classes')
 parser.add_argument('--d', type=int, default=1024,
                     help='Num of spectra dimension')
-parser.add_argument('--model', type=str, default='FlowMatching',
+parser.add_argument('--model', type=str, default='SchrodingerBridge',
                     help='Diffusion Model')
 parser.add_argument('--wavelength', type=str, default='780',
                     help='Excitation wavelength of data')
@@ -191,14 +191,92 @@ class FlowMatching(nn.Module):
         x0 = xt+self.t*vt
         return v,vt,x0
 
+class RectifiedFlow(nn.Module):
+    def __init__(self,in_dim,out_dim):
+        super().__init__()
+        self.config = MambaConfig(d_model=args.hidden, n_layers=args.layer)
+        self.epsilon = Mamba(self.config)
+        self.t1 = nn.Parameter(torch.rand(1))
+        self.t2 = nn.Parameter(torch.rand(1))
+    
+    def forward(self,x):
+        # flow matching
+        eps = torch.randn_like(x)
+        v = x-eps
+        xt = (1-self.t1)*x+self.t1*eps
+        vt = self.epsilon(xt)
+        x1 = xt+self.t1*vt
+        # reflow
+        v = x-x1
+        xt = (1-self.t2)*x+self.t2*x1
+        vt = self.epsilon(xt)
+        x0 = xt+self.t2*vt
+        return v,vt,x0
+
+class Consistency(nn.Module):
+    def __init__(self,in_dim,out_dim):
+        super().__init__()
+        self.config = MambaConfig(d_model=args.hidden, n_layers=args.layer)
+        self.epsilon = Mamba(self.config)
+        self.t1 = nn.Parameter(torch.rand(1))
+        self.t2 = nn.Parameter(torch.rand(1))
+    
+    def forward(self,x):
+        # flow matching
+        eps = torch.randn_like(x)
+        xt1 = (1-self.t1)*x+self.t1*eps
+        vt1 = self.epsilon(xt1)
+        x01 = xt1+self.t1*vt1
+        # another flow matching
+        eps = torch.randn_like(x)
+        xt2 = (1-self.t2)*x+self.t2*eps
+        vt2= self.epsilon(xt2)
+        x02 = xt2+self.t2*vt2
+        return x01,x02
+
+class SchrodingerBridge(nn.Module):
+    def __init__(self,in_dim,out_dim):
+        super().__init__()
+        self.config = MambaConfig(d_model=args.hidden, n_layers=args.layer)
+        self.epsilon = Mamba(self.config)
+        self.t1 = nn.Parameter(torch.rand(1))
+        self.t2 = nn.Parameter(torch.rand(1))
+        self.f = Mamba(self.config)
+        self.g = Mamba(self.config)
+        self.sigma = 0.1
+    
+    def forward(self,x):
+        # flow matching
+        eps = torch.randn_like(x)
+        v = x-eps
+        xt = (1-self.t1)*x+self.t1*eps
+        vt = self.epsilon(xt)
+        x1 = xt+self.t1*vt
+        # forward
+        drift = self.sigma*torch.sqrt(self.t2*(1-self.t2))*torch.randn_like(x)
+        xt = (1-self.t2)*x+self.t2*x1+drift # brownian bridge
+        vf = (x1-xt)/(1-self.t2)
+        vft = self.f(xt)
+        # backward
+        vg = (x-xt)/self.t2
+        vgt = self.g(xt)
+        x0 = xt+self.t2*vgt
+        return vf,vft,vg,vgt,x0
+
 class Net(nn.Module):
     def __init__(self,in_dim,out_dim):
         super().__init__()
         self.enc = nn.Linear(in_dim,args.hidden)
         if args.model == 'DDIM':
             self.diff = DDIM(args.hidden,args.hidden)
-        else:
+        elif args.model == 'FlowMatching':
             self.diff = FlowMatching(args.hidden,args.hidden)
+        elif args.model == 'RectifiedFlow':
+            self.diff = RectifiedFlow(args.hidden,args.hidden)
+        elif args.model == 'Consistency':
+            self.diff = Consistency(args.hidden,args.hidden)
+        else:
+            self.diff = SchrodingerBridge(args.hidden,args.hidden)
         
         self.dec = nn.Linear(args.hidden,in_dim)
         self.classifier = nn.Sequential(
@@ -208,7 +286,17 @@ class Net(nn.Module):
     
     def forward(self,x):
         z = self.enc(x)
-        eps,epst,z0 = self.diff(z)
+        if args.model == 'Consistency':
+            z01,z02 = self.diff(z)
+            z0 = 0.5*(z01+z02)
+            eps,epst = z01,z02
+        elif args.model == 'SchrodingerBridge':
+            vf,vft,vg,vgt,z0 = self.diff(z)
+            eps = torch.cat([vf,vg],dim=0)
+            epst = torch.cat([vft,vgt],dim=0)
+        else:
+            eps,epst,z0 = self.diff(z)
+        
         x0 = self.dec(z0)
         h = self.classifier(z0)
         return h.flatten(),eps,epst,x0
@@ -220,7 +308,10 @@ def nnclassifier(xt,yt,xv,yv):
     yt = torch.Tensor(yt)
     opt = torch.optim.Adam(clf.parameters(),lr=args.lr,weight_decay=args.wd)
     lambda1 = 1
-    lambda2 = 0.1
+    if args.model == 'Consistency' or args.model == 'SchrodingerBridge':
+        lambda2 = 1
+    else:
+        lambda2 = 0.1
     if args.cuda:
         clf = clf.cuda()
         xt = xt.cuda()

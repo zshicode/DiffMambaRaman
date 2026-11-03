@@ -88,6 +88,60 @@ $x_0$ can be reconstructed by
 
 $$\hat x_0=x_t+tv_t(x_t)$$
 
+### Rectified flow
+
+In basic flow matching, $x_t$ is easily affected by random $t$. Hence, rectified flow proposes reflow trick to enhance model robustness. Firstly, let $t_1\sim U(0,1)$ and
+
+$$x_1=(1-t_1)x_0+t_1\epsilon$$
+
+Then, let $t_2\sim U(0,1)$ and
+
+$$x_t=(1-t_2)x_0+t_2x_1$$
+
+Rectified flow derives velocity field as $v=x_0-x_1$, and trains a neural network $v_t$ to fit velocity field by minimizing the diffusion error
+
+$$L_d=\|v_t(x_t)-(x_0-x_1)\|^2$$
+
+As
+
+$$x_t=(1-t_2)x_0+t_2x_1=(1-t_2)x_0+t_2(x_0-v)=x_0-t_2v$$
+
+$x_0$ can be reconstructed by
+
+$$\hat x_0=x_t+t_2v_t(x_t)$$
+
+### Consistency model
+
+Herein, we implement an equivalent form of original consistecy model. Consider
+
+$$x_1=(1-t_1)x_0+t_1\epsilon$$
+
+$$x_2=(1-t_2)x_0+t_2\epsilon$$
+
+We can reconstruct $\hat x_{01}$ and $\hat x_{02}$ from $x_1$ and $x_2$ respectively. Different diffusion paths should reconstruct consistent $\hat x_0$, thus
+
+$$L_d=\|\hat x_{01}-\hat x_{02}\|^2$$
+
+$$\hat x_0=\frac{\hat x_{01}+\hat x_{02}}{2}$$
+
+From the perspective of contrastive learning, minimizing the diffrences between $\hat x_{01}$ and $\hat x_{02}$ leads to various of loss functions, among which dispersive loss is particularly feasible for diffusion model.
+
+### Schrodinger bridge
+
+Rectified flow and consistency model are two ways to enhance the robustness of diffusion paths depicted by basic flow matching. Different from these models, Schrodinger bridge ensures optimal transport to find the optimal diffusion path. Herein, we implement an equivalent form of original Schrodinger bridge. Consider
+
+$$x_1=(1-t_1)x_0+t_1\epsilon$$
+
+Then, use Brownian bridge (set $\sigma=0.1$)
+
+$$x_t=(1-t_2)x_0+t_2x_1+\sigma\sqrt{t_2(1-t_2)}\epsilon$$
+
+The forward velocity $v_f=(x_1-x_t)/(1-t_2)$ is fitted by forward network $v_{ft}$, and the backward velocity $v_g=(x_0-x_t)/t_2$ is fitted by backward network $v_{gt}$.
+
+$$L_d=\|v_{ft}(x_t)-v_f\|^2+\|v_{gt}(x_t)-v_g\|^2$$
+
+$$\hat x_0=x_t+t_2v_{gt}(x_t)$$
+
 ### Diffusion for representation learning
 
 In basic diffusion model, $x_0$ is defined as raw data, and $\hat x_0$ is defined as its generative sample. If we
@@ -100,9 +154,7 @@ Then we obtain latent diffusion framework, and the downstream task can adopt $\h
 
 $$L=L_c+\lambda_1 L_r+\lambda_2 L_d$$
 
-We set $\lambda_1=1,\lambda_2=0.1$.
-
-In this work, the diffusion networks (i.e. $\epsilon_t$ in DDIM and $v_t$ in flow matching) are implemented using Mamba.
+In this work, the diffusion networks are implemented using Mamba.
 
 ## Results
 
@@ -131,7 +183,7 @@ parser.add_argument('--c', type=int, default=2,
                     help='Num of classes')
 parser.add_argument('--d', type=int, default=1024,
                     help='Num of spectra dimension')
-parser.add_argument('--model', type=str, default='FlowMatching',
+parser.add_argument('--model', type=str, default='SchrodingerBridge',
                     help='Diffusion Model')
 parser.add_argument('--wavelength', type=str, default='780',
                     help='Excitation wavelength of data')
