@@ -98,6 +98,8 @@ Then, let $t_2\sim U(0,1)$ and
 
 $$x_t=(1-t_2)x_0+t_2x_1$$
 
+Although this cycle can be continued by iterating $x_k=(1-t_k)x_0+t_kx_{k-1}$, named as $k$-reflow, the rectified flow paper verified that $k=2$ is enough to achieve the best performance, and directly set $x_t=x_2=(1-t_2)x_0+t_2x_1$.
+
 Rectified flow derives velocity field as $v=x_0-x_1$, and trains a neural network $v_t$ to fit velocity field by minimizing the diffusion error
 
 $$L_d=\|v_t(x_t)-(x_0-x_1)\|^2$$
